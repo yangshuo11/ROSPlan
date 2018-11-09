@@ -1,153 +1,91 @@
+/* 
+ * Copyright [2018] <King's College London (KCL)>  
+ * 
+ * Author: Michael Cashmore (michael.cashmore at kcl.ac.uk)
+ * Contributor: Oscar Lima (olima_84@yahoo.com)
+ * 
+ * Derived class from PlannerInterface to call the ff planner.
+ * 
+ */
+
 #include "rosplan_planning_system/PlannerInterface/FFPlannerInterface.h"
 
 namespace KCL_rosplan {
 
-	/*-------------*/
-	/* constructor */
-	/*-------------*/
+// no need for constructor
 
-	FFPlannerInterface::FFPlannerInterface(ros::NodeHandle& nh)
-	{
-		node_handle = &nh;
+bool FFPlannerInterface::parsePlanOutput(std::string& plan) {
 
-		plan_server = new actionlib::SimpleActionServer<rosplan_dispatch_msgs::PlanAction>((*node_handle), "start_planning", boost::bind(&PlannerInterface::runPlanningServerAction, this, _1), false);
+	bool contingentFF = true; // TODO: remove harcoded true here
 
-		// publishing raw planner output
-		std::string plannerTopic = "planner_output";
-		node_handle->getParam("planner_topic", plannerTopic);
-		plan_publisher = node_handle->advertise<std_msgs::String>(plannerTopic, 1, true);
+	// check the planner solved the problem
+	std::ifstream planfile;
+	planfile.open((data_path_ + "plan.pddl").c_str());
+	std::string line;
 
-		// start planning action server
-		plan_server->start();
-	}
-	
-	FFPlannerInterface::~FFPlannerInterface()
-	{
-		delete plan_server;
-	}
-
-	/**
-	 * Runs external commands
-	 */
-	std::string FFPlannerInterface::runCommand(std::string cmd) {
-		std::string data;
-		FILE *stream;
-		char buffer[1000];
-		stream = popen(cmd.c_str(), "r");
-		while ( fgets(buffer, 1000, stream) != NULL )
-			data.append(buffer);
-		pclose(stream);
-		return data;
-	}
-
-	/*------------------*/
-	/* Plan and process */
-	/*------------------*/
-
-	/**
-	 * passes the problem to the Planner; the plan to post-processing.
-	 */
-	bool FFPlannerInterface::runPlanner() {
-
-		// save problem to file for planner
-		if(use_problem_topic && problem_instance_received) {
-			ROS_INFO("KCL: (%s) (%s) Writing problem to file.", ros::this_node::getName().c_str(), problem_name.c_str());
-			std::ofstream dest;
-			dest.open((problem_path).c_str());
-			dest << problem_instance;
-			dest.close();
-		}
-
-		// prepare the planner command line
-		std::string str = planner_command;
-		std::size_t dit = str.find("DOMAIN");
-		if(dit!=std::string::npos) str.replace(dit,6,domain_path);
-		std::size_t pit = str.find("PROBLEM");
-		if(pit!=std::string::npos) str.replace(pit,7,problem_path);
-		std::string commandString = str + " > " + data_path + "plan.pddl";
-
-		// call the planer
-		ROS_INFO("KCL: (%s) (%s) Running: %s", ros::this_node::getName().c_str(), problem_name.c_str(),  commandString.c_str());
-		std::string plan = runCommand(commandString.c_str());
-		ROS_INFO("KCL: (%s) (%s) Planning complete", ros::this_node::getName().c_str(), problem_name.c_str());
-
-		// check the planner solved the problem
-		std::ifstream planfile;
-		planfile.open((data_path + "plan.pddl").c_str());
-		std::string line;
-
-		bool solved = false;
-		while (not solved and std::getline(planfile, line)) {
-			// skip lines until there is a plan
-			if (line.compare("ff: found legal plan as follows") == 0) {
+	bool solved = false;
+	std::vector<std::string> filtered_plan_output;
+	while (std::getline(planfile, line)) {
+		// skip lines until we found evidence that a plan was found
+		if (contingentFF) {
+			if (line.compare("ff: found plan as follows") == 0)
 				solved = true;
-			}
+		}
+		else {
+			if (line.compare("ff: found legal plan as follows") == 0)
+				solved = true;
 		}
 
-		// Parse the solved plan
-		if (solved) {
-			// actions look like this:
-			// step    0: got_place C1
-			//         1: find_object V1 C1
-			// plan cost: XX
-			while (std::getline(planfile, line)) { // Move to the beginning of the plan
-				if (line.substr(0, 4) == "step") {
-					line = line.substr(4); // Remove the step
-					break;
-				}
-			}
-
-			// First iteration line will be like   0: got_place C1
-			while (line.find("plan cost") == line.npos and line.find("time spend") == line.npos and line.size() > 0) {
-				std::stringstream ss(line); // To trim whitespaces
-				std::string aux;
-				// Read the action number X:
-				ss >> aux;
-				planner_output += aux + " ("; // Add parenthesis before the action
-				while (ss >> aux) { // Read the rest
-					planner_output += aux;
-					if (ss.good()) planner_output += " "; // Add a whitespace unless we have processed all the line
-				}
-				planner_output += ")  [0.001]\n"; // Close parenthesis and add duration
-				std::getline(planfile, line);
-			}
-			// Convert to lowercase as FF prints all the actions and parameters in uppercase
-			std::transform(planner_output.begin(), planner_output.end(), planner_output.begin(), ::tolower);
+		// find string "---" inside line
+		if (line.find(std::string("---")) != std::string::npos) {
+			// do not add lines that have more than 3 hyphens (---)
+			if (!((line.find(std::string("-------")) != std::string::npos)))
+				filtered_plan_output.push_back(line);
 		}
-		planfile.close();
 
-		if(!solved) ROS_INFO("KCL: (%s) (%s) Plan was unsolvable.", ros::this_node::getName().c_str(), problem_name.c_str());
-		else ROS_INFO("KCL: (%s) (%s) Plan was solved.", ros::this_node::getName().c_str(), problem_name.c_str());
-
-		return solved;
+		// find end of plan
+		if (line.compare("||-1") == 0)
+			break;
 	}
 
-} // close namespace
+	// if solution was found parse the solved plan
+	if (solved) {
 
-	/*-------------*/
-	/* Main method */
-	/*-------------*/
+		ROS_INFO("size = %lu", filtered_plan_output.size());
+		for(std::string element : filtered_plan_output) {
+			ROS_DEBUG("raw line: %s", element.c_str());
 
-	int main(int argc, char **argv) {
+			// remove "0||0 --- " from element
+			auto index = element.find(std::string("||0 --- "));
 
-		srand (static_cast <unsigned> (time(0)));
+			// remove "--- SON:" and further
+			auto index2 = element.find(std::string(" --- SON:"));
 
-		ros::init(argc,argv,"rosplan_planner_interface");
-		ros::NodeHandle nh("~");
+			element = std::string("(") + element.substr(index + 8, index2 - (index + 8)) + std::string(")  [0.001]\n");
 
-		KCL_rosplan::FFPlannerInterface pi(nh);
+			// convert to lowercase
+			std::transform(element.begin(), element.end(), element.begin(), ::tolower);
 
-		// subscribe to problem instance
-		std::string problemTopic = "problem_instance";
-		nh.getParam("problem_topic", problemTopic);
-		ros::Subscriber problem_sub = nh.subscribe(problemTopic, 1, &KCL_rosplan::PlannerInterface::problemCallback, dynamic_cast<KCL_rosplan::PlannerInterface*>(&pi));
+			ROS_DEBUG("parsed line : %s", element.c_str() );
 
-		// start the planning services
-		ros::ServiceServer service1 = nh.advertiseService("planning_server", &KCL_rosplan::PlannerInterface::runPlanningServerDefault, dynamic_cast<KCL_rosplan::PlannerInterface*>(&pi));
-		ros::ServiceServer service2 = nh.advertiseService("planning_server_params", &KCL_rosplan::PlannerInterface::runPlanningServerParams, dynamic_cast<KCL_rosplan::PlannerInterface*>(&pi));
-
-		ROS_INFO("KCL: (%s) Ready to receive", ros::this_node::getName().c_str());
-		ros::spin();
-
-		return 0;
+			planner_output_ += element;
+		}
+		
+		// TODO: ff metric stuff was removed from here
 	}
+	planfile.close();
+
+	return solved;
+
+} } // close namespace
+
+
+int main(int argc, char **argv) {
+	ros::init(argc,argv,"rosplan_planner_interface");
+	KCL_rosplan::FFPlannerInterface pi;
+
+	// wait for callbacks
+	ros::spin();
+
+	return 0;
+}

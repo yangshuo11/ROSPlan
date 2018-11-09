@@ -1,34 +1,35 @@
+/* 
+ * Copyright [2018] <King's College London (KCL)>  
+ * 
+ * Author: Michael Cashmore (michael.cashmore at kcl.ac.uk)
+ * Contributor: Oscar Lima (olima_84@yahoo.com)
+ * 
+ * Derived class from PlannerInterface to call the ff planner.
+ * 
+ */
+
 #include "PlannerInterface.h"
-#include <fstream>
-#include <sstream>
 #include <string>
-#include <ctime>
-#include <string>
-#include <streambuf>
 
 #ifndef KCL_FF_planner_interface
 #define KCL_FF_planner_interface
 
-/**
- * This file contains an interface to the planner.
- */
 namespace KCL_rosplan {
 
 	class FFPlannerInterface: public PlannerInterface
 	{
-	private:
 
-		/* runs external commands */
-		std::string runCommand(std::string cmd);
+		// no need for constructor
 
-	protected:
+	  private:
 
-		bool runPlanner();
-
-	public:
-
-		FFPlannerInterface(ros::NodeHandle& nh);
-		virtual ~FFPlannerInterface();
+		/**
+		 * @brief process planner output, identify if planner found solution and if so then filter out actions,
+		 *        transform to lowercase and save in member variable "planner_output_"
+		 * @param contingentFF, true = contingentFF, false = metricFF
+		 * @return true if planner found solution, false if planner did not found solution
+		 */
+		bool parsePlanOutput(std::string& plan);
 	};
 
 } // close namespace
