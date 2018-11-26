@@ -104,23 +104,7 @@ namespace KCL_rosplan {
 		 * @returns m: a std::pair describing the upper and lower bounds on the ordering
 		 */
 		std::pair<double, double> getBounds(rosplan_dispatch_msgs::EsterelPlanNode &a,
-										   rosplan_dispatch_msgs::EsterelPlanNode &b) {
-
-			// o: std::set is a container (e.g. like std::vector)
-			// o: std::set does not allow duplicate elements, all are unique
-			// o: elements that contains are specified in template argument
-			// o: internally elements are stored in balanced binary tree
-			// o: will keep inserted elements in order
-			// o: supports iterators
-			// TODO: o: i see this variable not being used and must be remove, however
-			// is not the main cause of the problem therefore i will ignore for now but needs
-			// to be fixed later
-			std::set<int> checked_flags;
-			return getBounds(a, b, checked_flags);
-		}
-
-		std::pair<double, double> getBounds(rosplan_dispatch_msgs::EsterelPlanNode &a,
-				rosplan_dispatch_msgs::EsterelPlanNode &b, std::set<int> &checked_flags) {
+				rosplan_dispatch_msgs::EsterelPlanNode &b) {
 
 			// o: sanity check, if nodes are same return bound 0,0?
 			// m: a node happens when it happens
@@ -132,19 +116,17 @@ namespace KCL_rosplan {
 			std::pair<double, double> bounds = std::make_pair<double, double>(
 				-std::numeric_limits<double>::max(), std::numeric_limits<double>::max());
 
+			// o: check all nodes ordered before a
 			// m: check all nodes ordered after a
 
 			// m: iterate over edges_out of a (prenode)
 			for(size_t i = 0; i < a.edges_out.size(); i++) {
 				int edge_id = a.edges_out[i];
 				for(size_t j = 0; j < last_plan.edges[edge_id].sink_ids.size(); j++) {
-					// o: remove
-					if(j >= 1)
-						ROS_INFO("GREATER!!!!\n THAN!!!!!\n1 element!!!!!!!\n");
 
 					int node_id = last_plan.edges[edge_id].sink_ids[j];
 					// m: get bounds from child
-					std::pair<double, double> newbounds = getBounds(last_plan.nodes[node_id], b, checked_flags);
+					std::pair<double, double> newbounds = getBounds(last_plan.nodes[node_id], b);
 					// m: update bounds
 					if(bounds.first < newbounds.first + last_plan.edges[edge_id].duration_lower_bound)
 						bounds.first = newbounds.first + last_plan.edges[edge_id].duration_lower_bound;
